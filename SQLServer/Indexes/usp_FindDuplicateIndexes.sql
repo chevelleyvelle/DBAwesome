@@ -9,7 +9,7 @@ AS
 	 - Will want to look for query plan cache where index hints are used to verify nothing
 		in cache references the index you may want to drop.
 	 - May want to look at index usage of the index you want to drop.
- exec dbo.usp_FindExactDuplicateIndexes
+ exec dbo.usp_FindDuplicateIndexes
 =========================================================================================== */
 BEGIN
 	SET NOCOUNT ON;
@@ -101,10 +101,10 @@ BEGIN
 
 	WHILE @@FETCH_STATUS = 0
 	BEGIN 
-	 DECLARE @IQuery NVARCHAR(MAX)
+	 DECLARE @ISQL NVARCHAR(MAX)
 
 
-	 SET @IQuery = N'
+	 SET @ISQL = N'USE [' + @DBName + N']
 		DECLARE @DDL NVARCHAR(MAX) = N''''
 		IF OBJECT_ID(''tempdb..#index_column'') IS NOT NULL
 		DROP TABLE #index_column
@@ -153,12 +153,11 @@ SELECT @DDL =
 	FROM #DupeIndex d
 	WHERE DatabaseName = DB_NAME() and ObjectID = '+@ObjectID+' AND IndexID = '+@IndexID+''
 
-	DECLARE @ISQL NVARCHAR(MAX) = 'USE [' + @DBName +']; ' + @IQuery
 	 exec sp_executesql @ISQL  
 
 	---------------------------------------------------------------
-	 DECLARE @DQuery NVARCHAR(MAX)
-	 SET @DQuery = N'
+	 DECLARE @DSQL NVARCHAR(MAX)
+	 SET @DSQL = N'USE [' + @DBName + N']
 		DECLARE @DDL NVARCHAR(MAX) = N''''
 		IF OBJECT_ID(''tempdb..#index_column'') IS NOT NULL
 		DROP TABLE #index_column
@@ -210,7 +209,6 @@ SELECT @DDL =
 	WHERE DatabaseName = DB_NAME() and ObjectID = '+@ObjectID+' AND ExactDuplicateIndexID = '+@DupeIndexID+''
 	
 
-	DECLARE @DSQL NVARCHAR(MAX) = 'USE [' + @DBName +']; ' + @DQuery
 	 exec sp_executesql @DSQL  
 
 	FETCH NEXT FROM cur_IndexDDL
