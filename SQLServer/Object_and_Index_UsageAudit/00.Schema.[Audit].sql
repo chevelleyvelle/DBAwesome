@@ -1,0 +1,4 @@
+USE [DB_Name]
+GO
+
+CREATE SCHEMA [Audit] AUTHORIZATION dbo;
