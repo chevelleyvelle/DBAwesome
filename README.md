@@ -1,2 +1,0 @@
-# DBAwesome
-SQL DBA stuff 
