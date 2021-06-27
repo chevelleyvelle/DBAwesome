@@ -1,14 +1,21 @@
-USE [DB_Name]
+USE [DbMaintenance]
+GO
+
+/****** Object:  Table [Audit].[IndexUsage]    Script Date: 6/16/2021 4:14:29 PM ******/
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
 GO
 
 CREATE TABLE [Audit].[IndexUsage](
 	[ID] [int] IDENTITY(1,1) NOT NULL,
-	[DBName] [sysname] NOT NULL,
+	[DBName] [nvarchar](128) NOT NULL,
 	[ObjectID] [int] NOT NULL,
-	[SchemaName] [sysname] NULL,
-	[TableName] [sysname] NULL,
+	[SchemaName] [nvarchar](128) NULL,
+	[TableName] [nvarchar](128) NULL,
 	[IndexID] [int] NOT NULL,
-	[IndexName] [sysname] NOT NULL,
+	[IndexName] [nvarchar](128) NOT NULL,
 	[IndexColumns] [nvarchar](max) NULL,
 	[IncludeColumns] [nvarchar](max) NULL,
 	[IndexFilter] [nvarchar](max) NULL,
@@ -32,20 +39,20 @@ CREATE TABLE [Audit].[IndexUsage](
 	[IsDeleted] [bit] NOT NULL,
 	[EmailSendDate] [datetime] NULL,
 	[DisableIndexDate] [datetime] NULL,
-	[DisableIndexCommand] [varchar](2000) NULL,
-	[RebuildIndexCommand] [varchar](2000) NULL,
+	[DisableIndexCommand] [nvarchar](4000) NULL,
+	[RebuildIndexCommand] [nvarchar](4000) NULL,
 	[CleanupDate] [datetime] NULL,
-	[CleanupCommand] [varchar](2000) NULL,
+	[CleanupCommand] [nvarchar](4000) NULL,
 	[RollbackDate] [datetime] NULL,
 	[RollbackCommand] [nvarchar](max) NULL,
 	[InsertDate] [datetime] NOT NULL,
-	[UpdateDate] [datetime] NOT NULL,
+	[ModifyDate] [datetime] NOT NULL,
+	[SQLRestartDate] [datetime] NULL,
  CONSTRAINT [PK_IndexUsage_ID] PRIMARY KEY CLUSTERED 
 (
 	[ID] ASC
 )WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, FILLFACTOR = 100) ON [PRIMARY]
 ) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
-
 GO
 
 ALTER TABLE [Audit].[IndexUsage] ADD  CONSTRAINT [DF_IndexUsage_ExcludeFromCleanup]  DEFAULT ((0)) FOR [ExcludeFromCleanup]
@@ -57,7 +64,7 @@ GO
 ALTER TABLE [Audit].[IndexUsage] ADD  CONSTRAINT [DF_IndexUsage_InsertDate]  DEFAULT (getdate()) FOR [InsertDate]
 GO
 
-ALTER TABLE [Audit].[IndexUsage] ADD  CONSTRAINT [DF_IndexUsage_UpdateDate]  DEFAULT (getdate()) FOR [UpdateDate]
+ALTER TABLE [Audit].[IndexUsage] ADD  CONSTRAINT [DF_IndexUsage_ModifyDate]  DEFAULT (getdate()) FOR [ModifyDate]
 GO
 
 

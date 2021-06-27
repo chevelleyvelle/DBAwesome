@@ -1,5 +1,13 @@
-USE [DB_Name]
+USE [DbMaintenance]
 GO
+
+/****** Object:  UserDefinedFunction [Audit].[tvf_ObjectLastUse]    Script Date: 6/16/2021 4:19:06 PM ******/
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
 
 
 CREATE FUNCTION [Audit].[tvf_ObjectLastUse] ()
