@@ -19,7 +19,7 @@ DECLARE @DataFileGrowthMB  VARCHAR(10) = 128
 DECLARE @LogSizeMB  VARCHAR(10) = 128
 DECLARE @LogFileGrowthMB  VARCHAR(10) = 64
 
-DECLARE @MaxTempDBFiles INT = 12 --total Number of tempdb files to have 
+DECLARE @MaxTempDBFiles INT = 4 --total Number of tempdb files to have 
 
 SELECT 
 	DB_NAME() AS DatabaseName,
@@ -43,25 +43,50 @@ FROM sys.master_files mf
 WHERE DB_NAME() = DB_NAME(mf.database_id)
 ORDER BY mf.[file_id], [type_desc] DESC
 
+DECLARE @CurrentDataFileCount INT
 DECLARE @CurrentMaxFileNum VARCHAR(10)
 
-		SELECT @CurrentMaxFileNum = MAX(CASE WHEN PATINDEX('%[0-9]%',mf.[name]) >0 THEN SUBSTRING(mf.[name],PATINDEX('%[0-9]%',mf.[name]),2) ELSE 0 END)
+		SELECT @CurrentDataFileCount = COUNT(1), 
+			   @CurrentMaxFileNum = MAX(CASE WHEN PATINDEX('%[0-9]%',mf.[name]) >0 THEN SUBSTRING(mf.[name],PATINDEX('%[0-9]%',mf.[name]),2) ELSE 1 END)--Get last number on last file to increment from there.
 		FROM sys.master_files mf 
 		WHERE DB_NAME() = DB_NAME(mf.database_id)
+		AND mf.type_desc = 'ROWS'
 
-IF @CurrentMaxFileNum < @MaxTempDBFiles
+IF @CurrentDataFileCount < @MaxTempDBFiles
 BEGIN
-	WHILE @CurrentMaxFileNum <@MaxTempDBFiles
+	--Get Current physical file name and logical file name to mimic for consistency
+	DECLARE @PhysicalFileName VARCHAR(128)
+	DECLARE @FileName VARCHAR(128)
+
+	IF @CurrentDataFileCount = 1
+		BEGIN 
+			SET @PhysicalFileName = 'tempdev'
+			SET @FileName = 'tempdev'
+		END 
+		ELSE
+		BEGIN
+			SELECT TOP (1) 
+			@PhysicalFileName =  SUBSTRING(RIGHT(mf.physical_name,CHARINDEX('\',REVERSE(mf.physical_name))-1),1, LEN(RIGHT(mf.physical_name,CHARINDEX('\',REVERSE(mf.physical_name))-1))-PATINDEX('%[0-9]%',REVERSE(mf.physical_name))),
+			@FileName = SUBSTRING(mf.[name],1,LEN(mf.[name])-PATINDEX('%[0-9]%',REVERSE(mf.[name])))
+			FROM sys.master_files mf
+			WHERE DB_NAME() = DB_NAME(mf.database_id)
+			AND mf.[type_desc] = 'ROWS' AND mf.[file_id] > 1
+			ORDER BY  mf.[file_id]
+		END
+
+	WHILE @CurrentDataFileCount <@MaxTempDBFiles
 	BEGIN
 
 		SET @CurrentMaxFileNum = @CurrentMaxFileNum+1
 
 		SELECT 'USE [master];' +  + CHAR(13) + CHAR(10) + 
-			   'ALTER DATABASE [tempdb] ADD FILE (NAME = N'''+'tempdev' + @CurrentMaxFileNum + ''', FILENAME = N''' + LEFT(mf.physical_name, CHARINDEX('tempdb.mdf',mf.physical_name)-1) +'tempdev'+@CurrentMaxFileNum+'.ndf''' + 
+			   'ALTER DATABASE [tempdb] ADD FILE (NAME = N'''+ @FileName + @CurrentMaxFileNum + ''', FILENAME = N''' +  LEFT(mf.physical_name, (LEN(mf.physical_name) - CHARINDEX('\',REVERSE(mf.physical_name)))+1) + @PhysicalFileName +@CurrentMaxFileNum+'.ndf''' + 
 			   ', SIZE = ' +@DataSizeMB + 'MB, FILEGROWTH = ' +@DataFileGrowthMB + 'MB);'
 		FROM sys.master_files mf
 		WHERE DB_NAME() = DB_NAME(mf.database_id)
 		AND mf.name='tempdev'
+
+		SET @CurrentDataFileCount = @CurrentDataFileCount + 1
 	END
 END
 ELSE
