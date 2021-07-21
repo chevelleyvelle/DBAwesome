@@ -1,7 +1,7 @@
 USE [DbMaintenance]
 GO
 
-/****** Object:  StoredProcedure [Audit].[usp_IndexUsageInsert]    Script Date: 6/26/2021 5:26:20 PM ******/
+/****** Object:  StoredProcedure [Audit].[usp_IndexUsageInsert]    Script Date: 7/21/2021 1:40:53 PM ******/
 SET ANSI_NULLS ON
 GO
 
@@ -11,13 +11,17 @@ GO
 
 
 
-CREATE   PROCEDURE [Audit].[usp_IndexUsageInsert] @HistoryRetentionMonths INT = NULL, @TestMode BIT = NULL
+
+
+
+CREATE    PROCEDURE [Audit].[usp_IndexUsageInsert] @HistoryRetentionMonths INT = NULL, @TestMode BIT = NULL
 AS
 /* ========================================================================================
  Author:       CDurfey 
  Create date: 09/01/2020 
  Description: 
 	 - Log all Clustered and NonClustered indexes in non-excluded databases to a table in the DBA Team Database
+	 - This version does not keep data persisted through startup, relies on history.
 	 - This will be used in future analysis/automation of index cleanup for unused/duplicate/overlapping 
 	   indexes.
 	 - Only logs Clustered and NonClustered indexes of [sys].[Indexes].[Type] IN (1,2)
@@ -357,14 +361,14 @@ BEGIN
 				HasFilter = #Indexes.HasFilter,
 				IsDisabled = #Indexes.IsDisabled,
 				IndexSizeKB = ISNULL(#Indexes.IndexSizeKB, MyTarget.IndexSizeKB),
-				TotalSeeks = CASE WHEN #Indexes.Seeks > 0 THEN #Indexes.Seeks ELSE ISNULL(MyTarget.TotalSeeks, 0) END,
-				TotalScans = CASE WHEN #Indexes.Scans > 0 THEN #Indexes.Scans ELSE ISNULL(MyTarget.TotalScans, 0) END,
-				TotalLookups = CASE WHEN #Indexes.[Lookups] > 0 THEN #Indexes.Lookups ELSE ISNULL(MyTarget.TotalLookups, 0) END,
-				TotalUpdates = CASE WHEN #Indexes.Updates > 0 THEN #Indexes.Updates ELSE ISNULL(MyTarget.TotalUpdates, 0) END,					
-				LastUserSeek = ISNULL(#Indexes.LastUserSeek, MyTarget.LastUserSeek),	
-				LastUserScan = ISNULL(#Indexes.LastUserScan, MyTarget.LastUserScan),
-				LastUserLookup = ISNULL(#Indexes.LastUserLookup, MyTarget.LastUserLookup),
-				LastUserUpdate = ISNULL(#Indexes.LastUserUpdate, MyTarget.LastUserUpdate),
+				TotalSeeks = #Indexes.Seeks,
+				TotalScans = #Indexes.Scans,
+				TotalLookups = #Indexes.[Lookups],
+				TotalUpdates = #Indexes.Updates,					
+				LastUserSeek = #Indexes.LastUserSeek,	
+				LastUserScan = #Indexes.LastUserScan,
+				LastUserLookup = #Indexes.LastUserLookup,
+				LastUserUpdate = #Indexes.LastUserUpdate,
 				ExcludeFromCleanup = CASE WHEN MyTarget.ExcludeFromCleanup = 1 THEN  1 ELSE COALESCE(#Indexes.ExcludeFromCleanup,0) END,
 				IsDeleted = 0,
 				DisableIndexDate = CASE WHEN #Indexes.IsDisabled = 1 THEN ISNULL(MyTarget.DisableIndexDate, GETDATE()) ELSE NULL END,
@@ -487,14 +491,14 @@ IF @TestMode = 1
 		#Indexes.HasFilter,
 		#Indexes.IsDisabled,
 		#Indexes.IndexSizeKB,
-		CASE WHEN #Indexes.Seeks > 0 THEN #Indexes.Seeks ELSE ISNULL(MyTarget.TotalSeeks, 0) END AS TotalSeeks,
-		CASE WHEN #Indexes.Scans > 0 THEN #Indexes.Scans ELSE ISNULL(MyTarget.TotalScans, 0) END AS TotalScans,
-		CASE WHEN #Indexes.Lookups > 0 THEN #Indexes.Lookups ELSE ISNULL(MyTarget.TotalLookups, 0) END AS TotalLookups,
-		CASE WHEN #Indexes.Updates > 0 THEN #Indexes.Updates ELSE ISNULL(MyTarget.TotalUpdates, 0) END AS TotalUpdates,					
-		ISNULL(#Indexes.LastUserSeek, MyTarget.LastUserSeek) AS LastUserSeek,	
-		ISNULL(#Indexes.LastUserScan, MyTarget.LastUserScan) AS LastUserScan,
-		ISNULL(#Indexes.LastUserLookup, MyTarget.LastUserLookup) AS LastUserLookup,
-		ISNULL(#Indexes.LastUserUpdate, MyTarget.LastUserUpdate) AS LastUserUpdate,
+		#Indexes.Seeks AS TotalSeeks,
+		#Indexes.Scans AS TotalScans,
+		#Indexes.Lookups AS TotalLookups,
+		#Indexes.Updates AS TotalUpdates,					
+		#Indexes.LastUserSeek AS LastUserSeek,	
+		#Indexes.LastUserScan AS LastUserScan,
+		#Indexes.LastUserLookup AS LastUserLookup,
+		#Indexes.LastUserUpdate AS LastUserUpdate,
 		CASE WHEN MyTarget.ExcludeFromCleanup = 1 THEN 1 ELSE COALESCE(#Indexes.ExcludeFromCleanup, 0) END AS ExcludeFromCleanup,
 		CASE WHEN MyTarget.ObjectID IS NOT NULL THEN MyTarget.EmailSendDate ELSE NULL END AS EmailSendDate,
 		CASE WHEN MyTarget.ObjectID IS NOT NULL AND #Indexes.IsDisabled = 1 THEN ISNULL(MyTarget.DisableIndexDate, GETDATE()) 

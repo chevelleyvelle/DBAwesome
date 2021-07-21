@@ -13,35 +13,33 @@ Scripts out Add Tempdb files for number of files set above what already exists.
 		**This will add the files to that number with the matching settings to the other configurations using the variables above
 ----------------------------------------------------------------------------------------------------------------------------------*/
 
-DECLARE @DataSizeMB VARCHAR(10) = 512
-DECLARE @DataFileGrowthMB  VARCHAR(10) = 128
+DECLARE @DataSizeMB VARCHAR(10) = 8192
+DECLARE @DataFileGrowthMB  VARCHAR(10) = 1024
 
-DECLARE @LogSizeMB  VARCHAR(10) = 128
-DECLARE @LogFileGrowthMB  VARCHAR(10) = 64
+DECLARE @LogSizeMB  VARCHAR(10) = 16384
+DECLARE @LogFileGrowthMB  VARCHAR(10) = 2048
 
-DECLARE @MaxTempDBFiles INT = 4 --total Number of tempdb files to have 
+DECLARE @MaxTempDBFiles INT = 12 --total Number of tempdb files to have 
 
 SELECT 
 	DB_NAME() AS DatabaseName,
-	mf.[database_id] AS Database_id,
-	mf.[name] AS [FileName],
-	mf.[physical_name] AS PhysicalName,
-	mf.[type_desc] AS FileType,
-	CASE WHEN CEILING(mf.[size]/128) = 0 THEN 1 
-		 ELSE CEILING(mf.[size]/128) END AS TotalSizeMB,
-	CAST(FILEPROPERTY(mf.[name], 'SpaceUsed') AS INT)/128 AS UsedSpaceMB,
-	CASE WHEN ceiling(mf.[size]/128)  = 0 THEN (1 - CAST(FILEPROPERTY(mf.[name], 'SpaceUsed') AS INT)/128) 
-		 ELSE ((mf.[size]/128) - CAST(FILEPROPERTY(mf.[name], 'SpaceUsed') AS INT)/128) END AS AvailableSpaceMB,
-	CASE WHEN mf.[is_percent_growth] = 1 THEN CAST(mf.[growth] AS VARCHAR(20)) + '%'
-		 ELSE CAST(mf.[growth]*8/1024 AS varchar(20)) + 'MB' END AS GrowthUnits,   
-	CASE WHEN mf.[max_size] = -1 THEN NULL 
-		 WHEN mf.[max_size] = 268435456 THEN NULL   
-		 ELSE mf.[max_size] END AS MaxFileSizeMB,
-	CASE WHEN mf.[type_desc] = 'ROWS' THEN 'USE [master];' +  + CHAR(13) + CHAR(10) + 'ALTER DATABASE [tempdb] MODIFY FILE (NAME = N'''+ mf.[name] +''', SIZE = ' + @DataSizeMB + 'MB, FILEGROWTH = '+ @DataFileGrowthMB + 'MB);'+ CHAR(13) + CHAR(10) + CHAR(13) + CHAR(10)
-		 ELSE 'USE [master];' +  + CHAR(13) + CHAR(10) + 'ALTER DATABASE [tempdb] MODIFY FILE (NAME = N'''+ mf.[name] +''', SIZE = ' + @LogSizeMB + 'MB, FILEGROWTH = '+ @LogFileGrowthMB + 'MB);'+ CHAR(13) + CHAR(10) + CHAR(13) + CHAR(10) END AS AlterTempDB_Statement
-FROM sys.master_files mf 
-WHERE DB_NAME() = DB_NAME(mf.database_id)
-ORDER BY mf.[file_id], [type_desc] DESC
+	df.[name] AS [FileName],
+	df.[physical_name] AS PhysicalName,
+	df.[type_desc] AS FileType,
+	CASE WHEN CEILING(df.[size]/128) = 0 THEN 1 
+		 ELSE CEILING(df.[size]/128) END AS TotalSizeMB,
+	CAST(FILEPROPERTY(df.[name], 'SpaceUsed') AS INT)/128 AS UsedSpaceMB,
+	CASE WHEN ceiling(df.[size]/128)  = 0 THEN (1 - CAST(FILEPROPERTY(df.[name], 'SpaceUsed') AS INT)/128) 
+		 ELSE ((df.[size]/128) - CAST(FILEPROPERTY(df.[name], 'SpaceUsed') AS INT)/128) END AS AvailableSpaceMB,
+	CASE WHEN df.[is_percent_growth] = 1 THEN CAST(df.[growth] AS VARCHAR(20)) + '%'
+		 ELSE CAST(df.[growth]*8/1024 AS varchar(20)) + 'MB' END AS GrowthUnits,   
+	CASE WHEN df.[max_size] = -1 THEN NULL 
+		 WHEN df.[max_size] = 268435456 THEN NULL   
+		 ELSE df.[max_size] END AS MaxFileSizeMB,
+	CASE WHEN df.[type_desc] = 'ROWS' THEN 'USE [master];' +  + CHAR(13) + CHAR(10) + 'ALTER DATABASE [tempdb] MODIFY FILE (NAME = N'''+ df.[name] +''', SIZE = ' + @DataSizeMB + 'MB, FILEGROWTH = '+ @DataFileGrowthMB + 'MB);'+ CHAR(13) + CHAR(10) + CHAR(13) + CHAR(10)
+		 ELSE 'USE [master];' +  + CHAR(13) + CHAR(10) + 'ALTER DATABASE [tempdb] MODIFY FILE (NAME = N'''+ df.[name] +''', SIZE = ' + @LogSizeMB + 'MB, FILEGROWTH = '+ @LogFileGrowthMB + 'MB);'+ CHAR(13) + CHAR(10) + CHAR(13) + CHAR(10) END AS AlterTempDB_Statement
+FROM sys.database_files df 
+ORDER BY df.[type_desc] DESC, df.[file_id]
 
 DECLARE @CurrentDataFileCount INT
 DECLARE @CurrentMaxFileNum VARCHAR(10)

@@ -1,12 +1,14 @@
 USE [DbMaintenance]
 GO
 
-/****** Object:  StoredProcedure [Audit].[usp_IndexUsageHistoryInsert]    Script Date: 6/26/2021 5:25:00 PM ******/
+/****** Object:  StoredProcedure [Audit].[usp_IndexUsageHistoryInsert]    Script Date: 7/21/2021 1:40:46 PM ******/
 SET ANSI_NULLS ON
 GO
 
 SET QUOTED_IDENTIFIER ON
 GO
+
+
 
 
 
@@ -34,7 +36,7 @@ BEGIN
 	SET NOCOUNT ON;
 
 /* If @RetentionMonths IS NULL Defaut 18 */
-IF @RetentionMonths IS NULL
+IF @RetentionMonths IS NULL OR @RetentionMonths = 0
 BEGIN
 	SET @RetentionMonths = 18
 END
