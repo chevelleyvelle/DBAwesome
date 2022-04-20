@@ -1,20 +1,7 @@
 USE [DbMaintenance]
 GO
 
-/****** Object:  StoredProcedure [Audit].[usp_IndexUsageInsert]    Script Date: 7/21/2021 1:40:53 PM ******/
-SET ANSI_NULLS ON
-GO
-
-SET QUOTED_IDENTIFIER ON
-GO
-
-
-
-
-
-
-
-CREATE    PROCEDURE [Audit].[usp_IndexUsageInsert] @HistoryRetentionMonths INT = NULL, @TestMode BIT = NULL
+CREATE PROCEDURE [Audit].[usp_IndexUsageInsert] @HistoryRetentionMonths INT = NULL, @TestMode BIT = NULL
 AS
 /* ========================================================================================
  Author:       CDurfey 
@@ -50,7 +37,7 @@ BEGIN
 	SET @TestMode = 0 
 END
 
-IF @HistoryRetentionMonths IS NULL
+IF @HistoryRetentionMonths IS NULL OR @HistoryRetentionMonths = 0
 BEGIN
 	SET @HistoryRetentionMonths = 18
 END
@@ -63,10 +50,28 @@ END
 
 /* Get last SQL Server Service Restart Date */
 DECLARE @SQLRestart DATETIME
+	SELECT @SQLRestart = sqlserver_start_time FROM sys.dm_os_sys_info
 
-SELECT @SQLRestart = sqlserver_start_time FROM sys.dm_os_sys_info
+/* Proc Variables */
+--/*Dyanmic SQL Variables*/--
+DECLARE @IndexUsageQuery NVARCHAR(MAX)
 
-IF OBJECT_ID('tempdb..#Indexes') IS NOT NULL
+DECLARE @IndexDDLQuery NVARCHAR(MAX)
+DECLARE @IndexDDLParams NVARCHAR(MAX)
+DECLARE @QueryParamObjectID NVARCHAR(1000)
+DECLARE @QueryParamIndexID NVARCHAR(1000)
+
+SET @IndexDDLParams = '@ObjectID INT, @IndexID INT'
+SET @QueryParamObjectId = '@ObjectID'
+SET @QueryParamIndexID = '@IndexID'
+
+--/*Cursor Variables*/--
+DECLARE @DBName VARCHAR(100),
+		@ObjectID INT,
+		@IndexID INT
+
+/* Creat Temp Tables */
+IF OBJECT_ID('tempdb.dbo.#Indexes') IS NOT NULL
     DROP TABLE #Indexes
 
 CREATE TABLE #Indexes 
@@ -101,121 +106,130 @@ CREATE TABLE #Indexes
 		[IndexDDL] NVARCHAR(MAX) NULL
 	)
 
-DECLARE @IndexQuery NVARCHAR(MAX) =
- 'DECLARE @database_id INT
-  SELECT @database_id = database_id FROM sys.databases WHERE name = DB_NAME()
+IF OBJECT_ID('tempdb.dbo.#index_column') IS NOT NULL
+BEGIN
+    DROP TABLE #index_column
+END
+CREATE TABLE #index_column
+(	[object_id] INT,
+	[index_id] INT,
+	[is_descending_key] BIT,
+	[is_included_column] BIT,
+	[name] NVARCHAR(128)
+)
 
- SELECT 
-	   DB_NAME() AS DBName, 
-	   i.object_id AS ObjectID, 
-	   s.[name] AS SchemaName,
-	   o.[name] AS TableName,
-	   i.index_id AS IndexID,
- 	   i.[name] AS IndexName,
-	   icol.IndexColumns,
-	   incol.IncludeColumns,
-	   CASE WHEN i.has_filter = 1 AND i.filter_definition IS NOT NULL 
-		  THEN i.filter_definition ELSE NULL END AS IndexFilter,
- 	   i.type_desc AS IndexType,
-	   i.is_primary_key AS IsPrimaryKey,
-	   CASE WHEN i.Type = 1 THEN 1 ELSE 0 END AS IsClustered,
-	   i.is_unique AS IsUnique,
-	   i.is_unique_constraint AS IsUniqueConstraint,
- 	   i.has_filter AS HasFilter,
- 	   i.is_disabled AS IsDisabled,
-	   SUM(au.used_pages) * 8 AS IndexSizeKB,
- 	   ISNULL(ixus.user_seeks, 0) AS Seeks,
- 	   ISNULL(ixus.user_scans, 0) AS Scans,
- 	   ISNULL(ixus.user_lookups, 0) AS Lookups,
- 	   ISNULL(ixus.user_updates, 0) AS Updates,
- 	   ixus.last_user_seek AS LastUserSeek,
- 	   ixus.last_user_scan AS LastUserScan,
- 	   ixus.last_user_lookup AS LastUserLookup,
- 	   ixus.last_user_update AS LastUserUpdate
- FROM sys.objects o
- INNER JOIN sys.schemas s 
-	ON o.schema_id = s.schema_id
- INNER JOIN sys.indexes i 
-	ON o.object_id = i.object_id
- LEFT JOIN sys.dm_db_index_usage_stats ixus 
-	ON  i.index_id = ixus.index_id  
-		AND i.object_id = ixus.object_id 
-		AND ixus.database_id = @database_id
- LEFT JOIN sys.partitions AS p 
-	ON i.object_id = p.object_id 
-		AND i.index_id = p.index_id
- LEFT JOIN sys.allocation_units AS au 
-	ON p.partition_id = au.container_id
- CROSS APPLY 
-(
-    SELECT STUFF
-    (
-        (
-            SELECT '' ['' + col.name + '']''
-            FROM sys.index_columns ixcls
-            INNER JOIN sys.columns col 
-                ON ixcls.object_id = col.object_id 
-					AND ixcls.column_id = col.column_id
-            WHERE i.object_id = ixcls.object_id 
-                AND i.index_id = ixcls.index_id
-                AND ixcls.is_included_column = 0
-            FOR XML PATH('''')
-        )
-        ,1
-        ,1
-        ,''''
-    ) 
-) icol ([IndexColumns])
-CROSS APPLY 
-(
-    SELECT STUFF
-    (
-        (
-            SELECT '' ['' + col.name + '']''
-            FROM sys.index_columns ixcls
-            INNER JOIN sys.columns col 
-                ON ixcls.object_id = col.object_id 
-					AND ixcls.column_id = col.column_id
-            WHERE i.object_id = ixcls.object_id 
-                AND i.index_id = ixcls.index_id
-                AND ixcls.is_included_column = 1
-            FOR XML PATH('''')
-        )
-        ,1
-        ,1
-        ,''''
-    ) 
-) incol ([IncludeColumns])
- WHERE o.type = ''U'' 
-	AND i.type IN (1,2) 
-	AND o.name <> ''sysdiagrams'' 
-	AND o.is_ms_shipped = 0
- GROUP BY i.object_id, s.[name], o.[name], i.index_id, i.[name], icol.IndexColumns, incol.IncludeColumns, 
- CASE WHEN i.has_filter = 1 AND i.filter_definition IS NOT NULL THEN i.filter_definition ELSE NULL END, i.type_desc, i.is_primary_key, 
- CASE WHEN i.type = 1 THEN 1 ELSE 0 END, i.is_unique, i.is_unique_constraint, ixus.user_seeks, ixus.user_scans, ixus.user_lookups,   
- i.has_filter, i.is_disabled, ixus.user_updates, ixus.last_user_seek, ixus.last_user_scan, ixus.last_user_lookup, ixus.last_user_update'
-
- DECLARE curDB CURSOR LOCAL STATIC FORWARD_ONLY FOR   
+/* Get all Indexes in all databases */
+DECLARE curDB CURSOR LOCAL STATIC FORWARD_ONLY FOR   
 	SELECT DBName
 	FROM [Audit].tvf_GetDatabaseList()
 	ORDER BY DBName 
          
-	 DECLARE @DB sysname    
-   
 	 OPEN curDB    
-	 FETCH NEXT FROM curDB INTO @DB    
+	 FETCH NEXT FROM curDB INTO @DBName    
 	 WHILE @@FETCH_STATUS = 0    
 		BEGIN  
-		
-		DECLARE @IUsageSQL NVARCHAR(MAX) = 'USE [' + @DB +']; ' + @IndexQuery
-		
+
+		SET @IndexUsageQuery = N'USE [' + @DBName +'];'
+		SET @IndexUsageQuery = @IndexUsageQuery + CHAR(13) +
+		N'DECLARE @database_id INT' + CHAR(13) +
+		N'SELECT @database_id = database_id FROM sys.databases WHERE name = DB_NAME()' + CHAR(13) +
+		N'SELECT 
+			   DB_NAME() AS DBName, 
+			   i.object_id AS ObjectID, 
+			   s.[name] AS SchemaName,
+			   o.[name] AS TableName,
+			   i.index_id AS IndexID,
+ 			   i.[name] AS IndexName,
+			   icol.IndexColumns,
+			   incol.IncludeColumns,
+			   CASE WHEN i.has_filter = 1 AND i.filter_definition IS NOT NULL 
+				  THEN i.filter_definition ELSE NULL END AS IndexFilter,
+ 			   i.type_desc AS IndexType,
+			   i.is_primary_key AS IsPrimaryKey,
+			   CASE WHEN i.Type = 1 THEN 1 ELSE 0 END AS IsClustered,
+			   i.is_unique AS IsUnique,
+			   i.is_unique_constraint AS IsUniqueConstraint,
+ 			   i.has_filter AS HasFilter,
+ 			   i.is_disabled AS IsDisabled,
+			   SUM(au.used_pages) * 8 AS IndexSizeKB,
+ 			   ISNULL(ixus.user_seeks, 0) AS Seeks,
+ 			   ISNULL(ixus.user_scans, 0) AS Scans,
+ 			   ISNULL(ixus.user_lookups, 0) AS Lookups,
+ 			   ISNULL(ixus.user_updates, 0) AS Updates,
+ 			   ixus.last_user_seek AS LastUserSeek,
+ 			   ixus.last_user_scan AS LastUserScan,
+ 			   ixus.last_user_lookup AS LastUserLookup,
+ 			   ixus.last_user_update AS LastUserUpdate
+		 FROM sys.objects o
+		 INNER JOIN sys.schemas s 
+			ON o.schema_id = s.schema_id
+		 INNER JOIN sys.indexes i 
+			ON o.object_id = i.object_id
+		 LEFT JOIN sys.dm_db_index_usage_stats ixus 
+			ON  i.index_id = ixus.index_id  
+				AND i.object_id = ixus.object_id 
+				AND ixus.database_id = @database_id
+		 LEFT JOIN sys.partitions AS p 
+			ON i.object_id = p.object_id 
+				AND i.index_id = p.index_id
+		 LEFT JOIN sys.allocation_units AS au 
+			ON p.partition_id = au.container_id
+		 CROSS APPLY 
+		(
+			SELECT STUFF
+			(
+				(
+					SELECT '' ['' + col.name + '']''
+					FROM sys.index_columns ixcls
+					INNER JOIN sys.columns col 
+						ON ixcls.object_id = col.object_id 
+							AND ixcls.column_id = col.column_id
+					WHERE i.object_id = ixcls.object_id 
+						AND i.index_id = ixcls.index_id
+						AND ixcls.is_included_column = 0
+					FOR XML PATH('''')
+				)
+				,1
+				,1
+				,''''
+			) 
+		) icol ([IndexColumns])
+		CROSS APPLY 
+		(
+			SELECT STUFF
+			(
+				(
+					SELECT '' ['' + col.name + '']''
+					FROM sys.index_columns ixcls
+					INNER JOIN sys.columns col 
+						ON ixcls.object_id = col.object_id 
+							AND ixcls.column_id = col.column_id
+					WHERE i.object_id = ixcls.object_id 
+						AND i.index_id = ixcls.index_id
+						AND ixcls.is_included_column = 1
+					FOR XML PATH('''')
+				)
+				,1
+				,1
+				,''''
+			) 
+		) incol ([IncludeColumns])
+		 WHERE o.type = ''U'' 
+			AND i.type IN (1,2) 
+			AND o.name <> ''sysdiagrams'' 
+			AND o.is_ms_shipped = 0
+		 GROUP BY i.object_id, s.[name], o.[name], i.index_id, i.[name], icol.IndexColumns, incol.IncludeColumns, 
+		 CASE WHEN i.has_filter = 1 AND i.filter_definition IS NOT NULL THEN i.filter_definition ELSE NULL END, i.type_desc, i.is_primary_key, 
+		 CASE WHEN i.type = 1 THEN 1 ELSE 0 END, i.is_unique, i.is_unique_constraint, ixus.user_seeks, ixus.user_scans, ixus.user_lookups,   
+		 i.has_filter, i.is_disabled, ixus.user_updates, ixus.last_user_seek, ixus.last_user_scan, ixus.last_user_lookup, ixus.last_user_update'
+		 		
 		BEGIN TRY  
-				 
+
 			INSERT INTO #Indexes
 			(DBName, ObjectID, SchemaName, TableName, IndexID, IndexName, IndexColumns, IncludeColumns, IndexFilter, 
 			 IndexType, IsPrimaryKey, IsClustered, IsUnique, IsUniqueConstraint, HasFilter, IsDisabled, IndexSizeKB, 
 			 Seeks, Scans, Lookups, Updates, LastUserSeek, LastUserScan, LastUserLookup, LastUserUpdate)
-		    EXEC(@IUsageSQL)  
+		    EXECUTE sp_executesql @IndexUsageQuery
 
 		 END TRY  
 		 BEGIN CATCH
@@ -223,21 +237,18 @@ CROSS APPLY
 			 IF @@TRANCOUNT > 0
 				ROLLBACK TRAN
 
-			 PRINT 'ERROR on curDB (Get index usage) for database '+ @DB;
+			 PRINT 'ERROR on curDB (Get index usage) for database '+ @DBName;
 
 		 END CATCH  
-	 FETCH NEXT FROM curDB INTO @DB    
+	 FETCH NEXT FROM curDB INTO @DBName    
 		END   
         
 	 CLOSE curDB    
 	 DEALLOCATE curDB  
 
-   DECLARE @DBName VARCHAR(100),
-		   @ObjectID VARCHAR(10),
-		   @IndexID VARCHAR(10)
-
+/* Get all index column info and DDL Create statement */
    	DECLARE cur_IndexDDL CURSOR LOCAL FAST_FORWARD FOR
-		SELECT DBName, CAST(ObjectID AS VARCHAR(10)), CAST(IndexID AS VARCHAR(10))
+		SELECT DBName, ObjectID, IndexID
 		FROM #Indexes
 		ORDER BY DBName, ObjectID
 
@@ -249,14 +260,12 @@ CROSS APPLY
 	BEGIN 
 	BEGIN TRY  
 
-		DECLARE @ISQL NVARCHAR(MAX)
+	TRUNCATE TABLE #index_column
 
-		SET @ISQL = N'USE [' + @DBName + N']
-			DECLARE @DDL NVARCHAR(MAX) = N''''
-			IF OBJECT_ID(''tempdb..#index_column'') IS NOT NULL
-			DROP TABLE #index_column
-    
-			SELECT 
+		SET @IndexDDLQuery = N'USE [' + @DBName + N']'
+		SET @IndexDDLQuery = @IndexDDLQuery + CHAR(13) +
+			N'DECLARE @DDL NVARCHAR(MAX) = N''''' + CHAR(13) +
+			N'SELECT 
 				 ic.object_id,
 				 ic.index_id,
 				 ic.is_descending_key,
@@ -267,11 +276,8 @@ CROSS APPLY
 			JOIN sys.columns c WITH (NOWAIT) 
 				ON ic.object_id = c.object_id 
 					AND ic.column_id = c.column_id
-			WHERE ic.object_id = '+ @ObjectID +'
-				AND ic.index_id = '+@IndexID+'
-
-
-		SELECT @DDL = 
+			WHERE ic.object_id = ' + @QueryParamObjectId +  CHAR(13) + ' AND ic.index_id = ' + @QueryParamIndexID + CHAR(13) +
+		'SELECT @DDL = 
 		------------------- INDEXES ----------------------------------------------------------------------------------------------------------
 			CAST(
 				ISNULL(((SELECT
@@ -299,24 +305,24 @@ CROSS APPLY
 						ON o.schema_id = s.schema_id
 					JOIN sys.data_spaces ds 
 						ON i.data_space_id = ds.data_space_id
-					WHERE i.object_id = '+ @ObjectID +' 
-						AND i.index_id = '+ @IndexID +'
-						AND i.type IN (1,2) --Only Clustered and NonClustered Indexes
+					WHERE i.object_id = ' + @QueryParamObjectId + ' AND i.index_id = ' + @QueryParamIndexID + 
+						' AND i.type IN (1,2) --Only Clustered and NonClustered Indexes
 					FOR XML PATH(N''''), TYPE).value(N''.'', N''NVARCHAR(MAX)'')
 				), N'''')
 			AS NVARCHAR(MAX))
 
 			/* Update #ObjectDDL */
-			UPDATE d
+			UPDATE i
 			SET  IndexDDL = @DDL,
-				 ExcludeFromCleanup = CASE WHEN d.IsPrimaryKey = 1 OR d.IsClustered = 1 OR d.IsUnique = 1 OR d.IsUniqueConstraint = 1
+				 ExcludeFromCleanup = CASE WHEN i.IsPrimaryKey = 1 OR i.IsClustered = 1 OR i.IsUnique = 1 OR i.IsUniqueConstraint = 1
 											 THEN 1 ELSE 0 END
-			FROM #Indexes d
-			WHERE DBName = DB_NAME() 
-				AND ObjectID = '+ @ObjectID +' 
-				AND IndexID = '+ @IndexID +''
+			FROM #Indexes i
+			WHERE i.DBName = DB_NAME() 
+				AND ObjectID = ' + @QueryParamObjectId + ' AND IndexID = ' + @QueryParamIndexID + ';'
 
-		EXEC(@ISQL)
+			
+
+		EXECUTE sp_executesql @IndexDDLQuery, @IndexDDLParams, @ObjectId = @ObjectID, @IndexID = @IndexID
 
 	 END TRY
 	 BEGIN CATCH
@@ -329,7 +335,7 @@ CROSS APPLY
 			Next time it runs if it logs the index without failure it will mark the index IsDeleted back to 0 */
 		DELETE FROM #Indexes WHERE DBName = @DBName AND ObjectID = @ObjectID AND IndexID = @IndexID
 		
-		PRINT 'ERROR on cur_IndexDDL (Get index DDLs) for database '+@DBName + ' ObjectID ' +@ObjectID + ' IndexID ' +@IndexID;  
+		PRINT 'ERROR on cur_IndexDDL (Get index DDLs) for database '+@DBName + ' ObjectID ' +CAST(@ObjectID AS VARCHAR(10)) + ' IndexID ' +CAST(@IndexID AS VARCHAR(10));  
 			 
 	 END CATCH  
 
