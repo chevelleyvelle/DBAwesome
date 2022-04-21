@@ -1,0 +1,25 @@
+USE [DbMaintenance]
+GO
+
+CREATE TABLE [Audit].[TableSizeHistory](
+	[ID] [INT] IDENTITY(1,1) NOT NULL,
+	[DBName] [NVARCHAR](128) NOT NULL,
+	[SchemaName] [NVARCHAR](128) NULL,
+	[TableName] [NVARCHAR](128) NULL,
+	[RowCount] [BIGINT] NULL,
+	[ReservedSpaceKB] [BIGINT] NULL,
+	[DataSpaceKB] [BIGINT] NULL,
+	[IndexSpaceKB] [BIGINT] NULL,
+	[UnusedSpaceKB] [BIGINT] NULL,
+	[InsertDate] [DATETIME] NOT NULL,
+ CONSTRAINT [PK_TableSizeHistory_ID] PRIMARY KEY CLUSTERED 
+(
+	[ID] ASC
+)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
+) ON [PRIMARY]
+GO
+
+ALTER TABLE [Audit].[TableSizeHistory] ADD  CONSTRAINT [DF_TableSizeHistory_InsertDate]  DEFAULT (GETDATE()) FOR [InsertDate]
+GO
+
+
