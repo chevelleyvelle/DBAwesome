@@ -1,7 +1,7 @@
 USE [DbMaintenance]
 GO
 
-/****** Object:  Table [Audit].[IndexUsageHistory]    Script Date: 3/8/2024 2:35:47 PM ******/
+/****** Object:  Table [Audit].[IndexUsageHistory]    Script Date: 3/7/2024 10:03:35 AM ******/
 SET ANSI_NULLS ON
 GO
 
@@ -27,7 +27,11 @@ CREATE TABLE [Audit].[IndexUsageHistory](
 	[IsUniqueConstraint] [BIT] NULL,
 	[HasFilter] [BIT] NULL,
 	[IsDisabled] [BIT] NULL,
+	[IsCompressed] [BIT] NULL,
+	[CompressionDescription] [NVARCHAR](60) NULL,
 	[IndexSizeKB] [BIGINT] NULL,
+	[LobDataSizeKB] [BIGINT] NULL,
+	[RowCount] [BIGINT] NULL,
 	[TotalSeeks] [BIGINT] NULL,
 	[TotalScans] [BIGINT] NULL,
 	[TotalLookups] [BIGINT] NULL,
