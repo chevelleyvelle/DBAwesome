@@ -1,31 +1,48 @@
 USE [DbMaintenance]
 GO
 
-CREATE PROCEDURE [Audit].[usp_IndexUsageInsert] @HistoryRetentionMonths INT = NULL, @TestMode BIT = NULL
+/****** Object:  StoredProcedure [Audit].[usp_IndexUsageInsert]    Script Date: 2/22/2024 1:03:57 PM ******/
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
+---Need to add columns to the table then change the merge portion
+
+CREATE OR ALTER PROCEDURE [Audit].[usp_IndexUsageInsert] @HistoryRetentionMonths INT = NULL, @TestMode BIT = NULL
 AS
 /* ========================================================================================
  Author:       CDurfey 
  Create date: 09/01/2020 
+ Modified: 03/05/2024
  Description: 
-	 - Log all Clustered and NonClustered indexes in non-excluded databases to a table in the DBA Team Database
+	 - Log all Heaps, Clustered and NonClustered indexes in non-excluded databases to a table in the DBA Team Database
 	 - This version does not keep data persisted through startup, relies on history.
 	 - This will be used in future analysis/automation of index cleanup for unused/duplicate/overlapping 
 	   indexes.
-	 - Only logs Clustered and NonClustered indexes of [sys].[Indexes].[Type] IN (1,2)
+	 - Only logs Heaps, Clustered and NonClustered indexes of [sys].[Indexes].[Type] IN (0,1,2)
 		Excludes XML, Spatial, Clustered columnstore index, Nonclustered columnstore index, 
 		and Nonclustered hash index.
+		As of March 2024, started including Heaps Index type 0
 	 - Calls [Audit].usp_IndexUsageHistoryInsert passing in @HistoryRetentionMonths.
 		- Only keeps history retention in for @HistoryRetentionMonths as passed or default of 
-			18 months if NULL passed.  This allows history of low use indexes to be viewed over 
-			at least a year from time of logging start.
+			60 months if NULL passed.  This allows history of low use indexes to be viewed over 
+			at least 5 years from time of logging start.
+	 - DDL of the index does not include all settings for the index.  
+		Does include Compression, Fill Factor, and data file.  Use with caution.  
+		All other settings (lock, partitioning, etc not included here.)
+
+	--March 2024 changes include compression, lob data of an index, heaps, Row count.
+		Tweak of join to get index/log data size
 
 	 -Parameters: @TestMode = 1 Print what would be logged without logging to table
 							  NULLable.  If NULL Default 0
 				  @HistoryRetentionMonths NULLable.  If NULL Default 18.
 							  Used for history of [Audit].IndexUsageHistory
  Modification: 
- EXEC [Audit].[usp_IndexUsageInsert] @HistoryRetentionMonths= 18, @TestMode = 1
- EXEC [Audit].[usp_IndexUsageInsert] @HistoryRetentionMonths= 18, @TestMode = 0
+ EXEC [Audit].[usp_IndexUsageInsert] @HistoryRetentionMonths= 60, @TestMode = 1
+ EXEC [Audit].[usp_IndexUsageInsert] @HistoryRetentionMonths= 60, @TestMode = 0
  SELECT * FROM [Audit].[IndexUsage]
 =========================================================================================== */
 BEGIN 
@@ -39,7 +56,7 @@ END
 
 IF @HistoryRetentionMonths IS NULL OR @HistoryRetentionMonths = 0
 BEGIN
-	SET @HistoryRetentionMonths = 18
+	SET @HistoryRetentionMonths = 60
 END
 
 /* Run History first */
@@ -71,9 +88,6 @@ DECLARE @DBName VARCHAR(100),
 		@IndexID INT
 
 /* Creat Temp Tables */
-IF OBJECT_ID('tempdb.dbo.#Indexes') IS NOT NULL
-    DROP TABLE #Indexes
-
 CREATE TABLE #Indexes 
 	(	[ID] INT NOT NULL IDENTITY(1,1),
 		[DBName] NVARCHAR(128) NOT NULL,
@@ -92,7 +106,11 @@ CREATE TABLE #Indexes
 		[IsUniqueConstraint] BIT NULL,
 		[HasFilter] BIT NULL,
 		[IsDisabled] BIT NULL,
+		[IsCompressed] BIT NULL,
+		[CompressionDescription] NVARCHAR(60) NULL,
 		[IndexSizeKB] BIGINT NULL,
+		[LobDataSizeKB] BIGINT NULL,
+		[RowCount] BIGINT NULL,
 		[Seeks] BIGINT NULL,
 		[Scans] BIGINT NULL,
 		[Lookups] BIGINT NULL,
@@ -106,10 +124,6 @@ CREATE TABLE #Indexes
 		[IndexDDL] NVARCHAR(MAX) NULL
 	)
 
-IF OBJECT_ID('tempdb.dbo.#index_column') IS NOT NULL
-BEGIN
-    DROP TABLE #index_column
-END
 CREATE TABLE #index_column
 (	[object_id] INT,
 	[index_id] INT,
@@ -139,7 +153,7 @@ DECLARE curDB CURSOR LOCAL STATIC FORWARD_ONLY FOR
 			   s.[name] AS SchemaName,
 			   o.[name] AS TableName,
 			   i.index_id AS IndexID,
- 			   i.[name] AS IndexName,
+ 			   ISNULL(i.[name],''HEAP'') AS IndexName,
 			   icol.IndexColumns,
 			   incol.IncludeColumns,
 			   CASE WHEN i.has_filter = 1 AND i.filter_definition IS NOT NULL 
@@ -151,7 +165,12 @@ DECLARE curDB CURSOR LOCAL STATIC FORWARD_ONLY FOR
 			   i.is_unique_constraint AS IsUniqueConstraint,
  			   i.has_filter AS HasFilter,
  			   i.is_disabled AS IsDisabled,
-			   SUM(au.used_pages) * 8 AS IndexSizeKB,
+			   CASE WHEN p.data_compression = 0 THEN 0 ELSE 1 END AS IsCompressed,
+			   p.data_compression_desc AS CompressionDescription,
+			   ----SUM(au.used_pages) * 8 AS IndexSizeKB,
+			   SUM(au.total_pages) * 8 AS IndexSizeKB,
+			   SUM(CASE WHEN au.type=2 THEN au.total_pages ELSE 0 END) * 8 AS LobDataSizeKb,
+			   MAX(p.Rows) AS [RowCount],
  			   ISNULL(ixus.user_seeks, 0) AS Seeks,
  			   ISNULL(ixus.user_scans, 0) AS Scans,
  			   ISNULL(ixus.user_lookups, 0) AS Lookups,
@@ -173,7 +192,8 @@ DECLARE curDB CURSOR LOCAL STATIC FORWARD_ONLY FOR
 			ON i.object_id = p.object_id 
 				AND i.index_id = p.index_id
 		 LEFT JOIN sys.allocation_units AS au 
-			ON p.partition_id = au.container_id
+			----ON p.partition_id = au.container_id
+			ON p.hobt_id = au.container_id
 		 CROSS APPLY 
 		(
 			SELECT STUFF
@@ -215,20 +235,22 @@ DECLARE curDB CURSOR LOCAL STATIC FORWARD_ONLY FOR
 			) 
 		) incol ([IncludeColumns])
 		 WHERE o.type = ''U'' 
-			AND i.type IN (1,2) 
+			AND i.type IN (0,1,2) 
 			AND o.name <> ''sysdiagrams'' 
 			AND o.is_ms_shipped = 0
 		 GROUP BY i.object_id, s.[name], o.[name], i.index_id, i.[name], icol.IndexColumns, incol.IncludeColumns, 
 		 CASE WHEN i.has_filter = 1 AND i.filter_definition IS NOT NULL THEN i.filter_definition ELSE NULL END, i.type_desc, i.is_primary_key, 
 		 CASE WHEN i.type = 1 THEN 1 ELSE 0 END, i.is_unique, i.is_unique_constraint, ixus.user_seeks, ixus.user_scans, ixus.user_lookups,   
-		 i.has_filter, i.is_disabled, ixus.user_updates, ixus.last_user_seek, ixus.last_user_scan, ixus.last_user_lookup, ixus.last_user_update'
+		 i.has_filter, i.is_disabled, ixus.user_updates, ixus.last_user_seek, ixus.last_user_scan, ixus.last_user_lookup, ixus.last_user_update,
+		 CASE WHEN p.data_compression = 0 THEN 0 ELSE 1 END, p.data_compression_desc'
 		 		
 		BEGIN TRY  
 
 			INSERT INTO #Indexes
 			(DBName, ObjectID, SchemaName, TableName, IndexID, IndexName, IndexColumns, IncludeColumns, IndexFilter, 
-			 IndexType, IsPrimaryKey, IsClustered, IsUnique, IsUniqueConstraint, HasFilter, IsDisabled, IndexSizeKB, 
-			 Seeks, Scans, Lookups, Updates, LastUserSeek, LastUserScan, LastUserLookup, LastUserUpdate)
+			 IndexType, IsPrimaryKey, IsClustered, IsUnique, IsUniqueConstraint, HasFilter, IsDisabled, IsCompressed,
+			 CompressionDescription, IndexSizeKB, LobDataSizeKB, [RowCount], Seeks, Scans, Lookups, Updates, 
+			 LastUserSeek, LastUserScan, LastUserLookup, LastUserUpdate)
 		    EXECUTE sp_executesql @IndexUsageQuery
 
 		 END TRY  
@@ -297,7 +319,8 @@ DECLARE curDB CURSOR LOCAL STATIC FORWARD_ONLY FOR
 									AND c.index_id = i.index_id
 								FOR XML PATH(N''''), TYPE).value(N''.'', N''NVARCHAR(MAX)''), 1, 2, N'''') + N'')'', N'''')  + NCHAR(13)
 								+ CASE WHEN i.filter_definition IS NOT NULL THEN N'' WHERE '' + i.filter_definition ELSE N'' '' END 
-								+ '' WITH (ONLINE = ON''+  CASE WHEN i.fill_factor <> 0 THEN N'', FILLFACTOR = '' + CAST(i.fill_factor AS VARCHAR(10)) + N'')''  ELSE N'')'' END + '' ON '' + QUOTENAME(ds.name)
+								+ '' WITH (ONLINE = ON''+  CASE WHEN i.fill_factor <> 0 THEN N'', FILLFACTOR = '' + CAST(i.fill_factor AS VARCHAR(10)) + N'' ''  ELSE N'' '' END +
+								+  CASE WHEN  p.data_compression <> 0 THEN N'', DATA_COMPRESSION = '' + p.data_compression_desc + N'')''  ELSE N'')'' END +'' ON '' + QUOTENAME(ds.name)
 					FROM sys.indexes i WITH (NOWAIT)
 					JOIN sys.objects o 
 						ON i.object_id = o.object_id
@@ -305,6 +328,9 @@ DECLARE curDB CURSOR LOCAL STATIC FORWARD_ONLY FOR
 						ON o.schema_id = s.schema_id
 					JOIN sys.data_spaces ds 
 						ON i.data_space_id = ds.data_space_id
+					 LEFT JOIN sys.partitions AS p 
+						ON i.object_id = p.object_id 
+						AND i.index_id = p.index_id
 					WHERE i.object_id = ' + @QueryParamObjectId + ' AND i.index_id = ' + @QueryParamIndexID + 
 						' AND i.type IN (1,2) --Only Clustered and NonClustered Indexes
 					FOR XML PATH(N''''), TYPE).value(N''.'', N''NVARCHAR(MAX)'')
@@ -319,8 +345,7 @@ DECLARE curDB CURSOR LOCAL STATIC FORWARD_ONLY FOR
 			FROM #Indexes i
 			WHERE i.DBName = DB_NAME() 
 				AND ObjectID = ' + @QueryParamObjectId + ' AND IndexID = ' + @QueryParamIndexID + ';'
-
-			
+		
 
 		EXECUTE sp_executesql @IndexDDLQuery, @IndexDDLParams, @ObjectId = @ObjectID, @IndexID = @IndexID
 
@@ -366,7 +391,11 @@ BEGIN
 				IsUniqueConstraint = #Indexes.IsUniqueConstraint,
 				HasFilter = #Indexes.HasFilter,
 				IsDisabled = #Indexes.IsDisabled,
+				IsCompressed = #Indexes.IsCompressed,
+				CompressionDescription = #Indexes.CompressionDescription,
 				IndexSizeKB = ISNULL(#Indexes.IndexSizeKB, MyTarget.IndexSizeKB),
+				LobDataSizeKB = ISNULL(#Indexes.LobDataSizeKB, MyTarget.LobDataSizeKB),
+				[RowCount] = #Indexes.[RowCount],
 				TotalSeeks = #Indexes.Seeks,
 				TotalScans = #Indexes.Scans,
 				TotalLookups = #Indexes.[Lookups],
@@ -405,7 +434,11 @@ BEGIN
 		IsUniqueConstraint,
 		HasFilter,
 		IsDisabled,
+		IsCompressed,
+		CompressionDescription,
 		IndexSizeKB,
+		LobDataSizeKB,
+		[RowCount],
 		TotalSeeks,
 		TotalScans,
 		TotalLookups,
@@ -445,7 +478,11 @@ BEGIN
 			#Indexes.IsUniqueConstraint,
 			#Indexes.HasFilter,
 			#Indexes.IsDisabled,
+			#Indexes.IsCompressed,
+			#Indexes.CompressionDescription,
 			#Indexes.IndexSizeKB,
+			#Indexes.LobDataSizeKB,
+			#Indexes.[RowCount],
 			#Indexes.Seeks,
 			#Indexes.Scans,
 			#Indexes.Lookups,
@@ -496,7 +533,11 @@ IF @TestMode = 1
 		#Indexes.IsUniqueConstraint,
 		#Indexes.HasFilter,
 		#Indexes.IsDisabled,
+		#Indexes.IsCompressed,
+		#Indexes.CompressionDescription,
 		#Indexes.IndexSizeKB,
+		#Indexes.LobDataSizeKB,
+		#Indexes.[RowCount],
 		#Indexes.Seeks AS TotalSeeks,
 		#Indexes.Scans AS TotalScans,
 		#Indexes.Lookups AS TotalLookups,
@@ -534,5 +575,3 @@ END
 
 
 GO
-
-
